@@ -44,6 +44,12 @@ Actualizar el archivo `src/main/resources/application.properties` con tus creden
 spring.datasource.url=jdbc:postgresql://localhost:5432/literalura
 spring.datasource.username=TU_USUARIO
 spring.datasource.password=TU_PASSWORD
+spring.datasource.driver-class-name=org.postgresql.Driver
+
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=true
+spring.jpa.properties.hibernate.format_sql=true
+spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect
 ```
 
 ### 3. Estructura del Proyecto
@@ -69,11 +75,32 @@ src/
 │   │   └── LiteraluraApplication.java
 │   └── resources/
 │       └── application.properties
+└── build/
+    └── libs/
+        └── literalura-0.0.1-SNAPSHOT.jar
 ```
 
 ## 🏃‍♂️ Ejecución
 
-### Usando Gradle Wrapper (Recomendado)
+### 1. Compilar el proyecto
+
+```bash
+# En Windows
+./gradlew build
+
+# En Linux/Mac
+./gradlew build
+```
+
+### 2. Ejecutar la aplicación
+
+```bash
+java -jar build/libs/literalura-0.0.1-SNAPSHOT.jar
+```
+
+### Alternativa usando Gradle (modo desarrollo)
+
+Si necesitas ejecutar en modo desarrollo:
 
 ```bash
 # En Windows
@@ -83,57 +110,81 @@ src/
 ./gradlew bootRun
 ```
 
-### Usando Java directamente
-
-```bash
-# Compilar el proyecto
-./gradlew build
-
-# Ejecutar el JAR generado
-java -jar build/libs/literalura-0.0.1-SNAPSHOT.jar
-```
-
 ## 📖 Uso de la Aplicación
 
 Al ejecutar la aplicación, verás un menú interactivo con las siguientes opciones:
 
+```
+==================================================
+🔶 LITERALURA - CATÁLOGO DE LIBROS 🔶
+==================================================
+1 - Buscar libro por título
+2 - Listar libros registrados
+3 - Listar autores
+4 - Listar autores vivos en un determinado año
+5 - Listar libros por idioma
+0 - Salir
+==================================================
+```
+
 ### 1. Buscar libro por título
 - Ingresa el título del libro que deseas buscar
 - La aplicación consulta la API de Gutendx
-- Si encuentra el libro, lo guarda en la base de datos
+- Si encuentra el libro, lo guarda en la base de datos con su autor
 - Si ya existe, te informa que está registrado
+- Maneja automáticamente la creación de autores nuevos
 
 ### 2. Listar libros registrados
 - Muestra todos los libros almacenados en la base de datos
 - Información incluye: título, autor, idioma y número de descargas
+- Formato ordenado y fácil de leer
 
 ### 3. Listar autores
-- Muestra todos los autores registrados
+- Muestra todos los autores registrados alfabéticamente
 - Incluye fechas de nacimiento y muerte (si están disponibles)
+- Formato: "Autor: Nombre (año_nacimiento - año_muerte)"
 
 ### 4. Listar autores vivos en un determinado año
-- Ingresa un año específico
+- Ingresa un año específico (ejemplo: 1850)
 - Muestra autores que estaban vivos en ese año
-- Considera fecha de nacimiento y muerte para el cálculo
+- Considera autores nacidos antes o en ese año Y que murieron después o que aún viven
 
 ### 5. Listar libros por idioma
 - Muestra estadísticas de libros agrupados por idioma
-- Traduce códigos de idioma a nombres legibles
+- Traduce códigos de idioma a nombres legibles (es → Español, en → Inglés, etc.)
+- Ordenado por cantidad de libros descendente
 
 ### 0. Salir
-- Termina la ejecución de la aplicación
+- Termina la ejecución de la aplicación con mensaje de despedida
 
 ## 🔧 Funcionalidades Técnicas
 
 ### Mapeo JSON con Jackson
-- Uso de `@JsonAlias` para mapear nombres de campos
-- `@JsonIgnoreProperties` para ignorar campos no necesarios
-- `ObjectMapper` para conversión automática
+```java
+@JsonIgnoreProperties(ignoreUnknown = true)
+public class LibroDTO {
+    @JsonAlias("title")
+    private String titulo;
+    
+    @JsonAlias("authors")
+    private List<AutorDTO> autores;
+    
+    @JsonAlias("download_count")
+    private Integer numeroDescargas;
+}
+```
 
 ### Relaciones JPA
-- Relación `@OneToMany` entre Autor y Libro
-- Relación `@ManyToOne` entre Libro y Autor
-- Cascade types para persistencia automática
+```java
+// En la entidad Autor
+@OneToMany(mappedBy = "autor", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+private List<Libro> libros;
+
+// En la entidad Libro
+@ManyToOne(fetch = FetchType.LAZY)
+@JoinColumn(name = "autor_id")
+private Autor autor;
+```
 
 ### Consultas Derivadas
 ```java
@@ -146,35 +197,91 @@ List<Autor> findAutoresVivosEnAño(@Param("año") Integer año);
 List<Object[]> countLibrosPorIdioma();
 ```
 
+### Gestión de Transacciones
+- Uso de `@Transactional` para operaciones de base de datos
+- `@Transactional(readOnly = true)` para consultas de solo lectura
+- Manejo automático de entidades JPA en contexto de persistencia
+
 ### Validación de Entrada
-- Manejo de excepciones `InputMismatchException`
-- Validación de campos obligatorios
-- Limpieza de buffer del Scanner
+- Manejo robusto de excepciones `InputMismatchException`
+- Validación de campos obligatorios y formatos
+- Limpieza automática de buffer del Scanner
+- Mensajes de error informativos
 
-## 🐛 Solución de Problemas Comunes
+## 🔍 Detalles de Implementación
 
-### Error de conexión a PostgreSQL
-- Verificar que PostgreSQL esté ejecutándose
-- Comprobar credenciales en `application.properties`
-- Asegurar que la base de datos `literalura` existe
+### Consumo de API
+```java
+// URL base de Gutendx
+private static final String URL_BASE = "https://gutendx.com/books/";
 
-### Error al consumir la API
-- Verificar conexión a internet
-- La API de Gutendx a veces tiene limitaciones de rate
-- Reintentar la búsqueda después de unos segundos
+// Búsqueda con codificación URL
+String url = URL_BASE + "?search=" + titulo.replace(" ", "%20");
+```
 
-### Libros duplicados
-- La aplicación verifica automáticamente si un libro ya existe
-- Se basa en el título para evitar duplicados
+### Manejo de Errores
+- Timeout de 30 segundos para peticiones HTTP
+- Manejo de interrupciones de hilo
+- Logging para debugging
+- Recuperación graceful ante fallos de API
+
+### Persistencia Inteligente
+- Verificación de duplicados antes de guardar
+- Reutilización de autores existentes
+- Creación automática de autor "Desconocido" cuando no hay información
 
 ## 📡 API Utilizada
 
-**Gutendx API**: https://gutendx.com/books/
+**Gutendx API**: https://gutendex.com/books/
 
-Ejemplo de consulta:
+### Ejemplos de consulta:
 ```
+# Buscar por título
 https://gutendx.com/books/?search=frankenstein
+
+# Respuesta JSON esperada:
+{
+  "count": 1,
+  "results": [
+    {
+      "id": 84,
+      "title": "Frankenstein; Or, The Modern Prometheus",
+      "authors": [
+        {
+          "name": "Shelley, Mary Wollstonecraft",
+          "birth_year": 1797,
+          "death_year": 1851
+        }
+      ],
+      "languages": ["en"],
+      "download_count": 50000
+    }
+  ]
+}
 ```
+
+## 🎯 Características del Proyecto
+
+Este proyecto implementa todas las funcionalidades requeridas del challenge:
+
+- ✅ **Análisis de JSON con Jackson**
+- ✅ **Conversión de datos DTO → Entity**
+- ✅ **Interacción con usuario vía consola**
+- ✅ **Consulta de libros por título**
+- ✅ **Consulta de autores con fechas de vida**
+- ✅ **Persistencia con PostgreSQL y JPA**
+- ✅ **Estadísticas por idioma**
+- ✅ **Consulta de autores vivos por año**
+
+## 🚀 Posibles Mejoras Futuras
+
+- Interfaz web con Spring MVC
+- API REST para exposición de datos
+- Búsqueda por múltiples criterios
+- Sistema de favoritos
+- Exportación de datos a PDF/Excel
+- Cache para consultas frecuentes
+- Paginación de resultados
 
 ## 🤝 Contribuciones
 
@@ -186,14 +293,14 @@ Las contribuciones son bienvenidas. Para contribuir:
 4. Push a la rama (`git push origin feature/AmazingFeature`)
 5. Abre un Pull Request
 
-## 📄 Licencia
-
-Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) para detalles.
 
 ## 👨‍💻 Autor
+Carlos Ttito
 
 Desarrollado como parte del challenge de Alura - ONE (Oracle Next Education)
 
 ---
 
 ⭐️ Si te gustó este proyecto, ¡dale una estrella!
+
+**¿Necesitas ayuda?** Abre un issue en el repositorio y te ayudaremos a resolver cualquier problema.
